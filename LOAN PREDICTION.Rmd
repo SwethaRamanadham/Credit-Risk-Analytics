@@ -1,0 +1,525 @@
+---
+title: "Loan Default Prediction"
+author: "Swetha Ramanadham"
+date: "30/01/2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+### Objective : 
+
+      To predict the risk of Default by the customer, using the given credit data for a german firm.
+
+Method used : Logistic Regression - Logistic regression is the appropriate regression analysis to conduct when the dependent variable is binary, in our case its, 
+'Default_', 0 : client will default on repayment of loan
+            1 : client will not default for repayment of loan
+
+
+Reading the Data
+```{r}
+credit = read.csv("C:\\Users\\R swetha\\Desktop\\Model Interpretation\\germancredit.csv")
+
+colnames(credit)
+
+categorical_cols<-names(Filter(is.factor,credit))
+categorical_cols
+
+numerical_cols<-names(Filter(is.numeric,credit))
+numerical_cols
+```
+
+### Get a basic understanding of the dataset
+
+```{r}
+dim(credit)
+str(credit)
+table(credit$Default_)
+```
+As we can see the data is highly imbalanced
+
+
+
+### BIVARIATE ANALYSIS
+```{r}
+#Side-by-side Boxplots for numerical variables
+for(i in 2:ncol(credit))
+{
+  if(is.numeric(credit[,i]))
+  {
+    if(length(unique(credit[,i])) > 10)
+    {
+      boxplot(credit[,i] ~ credit$Default_, main = names(credit)[i], ylab = names(credit)[i])
+    }
+    
+    else if(length(unique(credit[,i])) < 10)
+    {
+      barplot(table(credit[,i], credit$Default_), main=names(credit)[i], 
+              xlab = names(credit)[i], beside = T, legend = rownames(table(credit[,i])))
+    }
+  }
+}
+
+```
+
+### Generating WOE value for all the categorical variables
+
+```{r, echo=FALSE}
+library(InformationValue)
+library(xlsx)
+#Calculate the WOE table for the variable history
+
+WOETable(credit$history, credit$Default_)
+
+
+
+#Exporting the WOE Table for every categorical variables in excel workbook
+wb = createWorkbook()
+
+for(i in 2:ncol(credit))
+{
+  if(is.factor(credit[,i]))
+  {
+    
+    varname = names(credit)[i]
+    
+    sheet = createSheet(wb, varname)
+    
+    woe = WOETable(credit[,varname], credit$Default_)
+    
+    addDataFrame(woe, sheet = sheet, startColumn = 2, row.names = F)
+    
+  }
+}
+
+saveWorkbook(wb, "WOE Table.xlsx")
+
+```
+
+### Re grouping the levels of categorical variables based on WOE
+
+```{r}
+library(InformationValue)
+#re-level the credit history and a few other variables based on similar woe values
+credit2 = credit
+
+
+#VARIABLE: Credit history
+credit2$history = factor(credit$history, levels=c("A30","A31","A32","A33","A34"))
+levels(credit2$history) = c("good","good","poor","poor","terrible")
+
+
+
+#VARIABLE: Purpose
+credit2$purpose = factor(credit$purpose, levels=c("A41","A48","A43","A42","A44","A49","A45","A40","A410","A46"))
+levels(credit2$purpose) = c("Re-training","Used-car","Radio TV", rep("FurnitureandDomesticapp",2),
+                            rep("BusinessorRepairs",2), "NewCar", rep("EducationandOthers",2))   #[Check the no. of levels]
+
+#VARIABLE: status
+credit2$status = factor(credit$status, levels=c("A91","A92","A93","A94"))
+levels(credit2$status) = c("male divorced","female divorced",rep("male single-married",2))
+
+#VARIABLE: others
+credit2$others = factor(credit$others, levels=c("A101","A102","A103"))
+levels(credit2$others) = c("none","co-applicant","guarantor")
+
+#VARIABLE: property
+credit2$property = factor(credit$property, levels=c("A121","A122","A123","A124"))
+levels(credit2$property) = c("RealEstate",rep("lifeInsurance",2),"NoProperty")
+
+
+#VARIABLE: otherplans
+credit2$otherplans = factor(credit$otherplans, levels=c("A141","A142","A143"))
+levels(credit2$otherplans) = c(rep("bank and stores",2),"none")
+
+#VARIABLE: housing
+credit2$housing = factor(credit$housing, levels=c("A151","A152","A153"))
+levels(credit2$housing) = c("rent","own","free")
+
+
+#VARIABLE: job
+credit2$job = factor(credit$job, levels=c("A171","A172","A173","A174"))
+levels(credit2$job) = c("unskilled Non-resident","unskilled Resident","skilled","self-employed")
+
+#VARIABLE: tele
+credit2$tele = factor(credit$tele, levels=c("A191","A192"))
+levels(credit2$tele) = c("not registered","registered")
+
+#VARIABLE: foreign_
+credit2$foreign_ = factor(credit$foreign_, levels=c("A201","A202"))
+levels(credit2$foreign_) = c("Yes","no")
+```
+
+### Using IV to understand the importance of the categorical variables
+
+```{r}
+library(InformationValue)
+library(Information)
+
+
+for(i in 2:ncol(credit2))
+{
+  if(is.factor(credit2[,i]))
+  {
+    varname = names(credit2)[i]
+    
+    print(varname)
+    print(IV(X=credit2[,varname], Y=credit2$Default_))
+    
+  }
+}
+```
+
+### Using IV to understand the importance of the numerical variables
+
+```{r}
+
+IV <- create_infotables(data=credit, y="Default_", bins=10, parallel=FALSE)
+IV_Value = data.frame(IV$Summary)
+IV_Value
+```
+
+### Train-Test Split
+
+```{r}
+
+library(caTools)
+set.seed(88)
+split <- sample.split(credit2$Default_, SplitRatio = 0.75)
+View(split)
+
+
+
+#get training and test data
+train <- subset(credit2, split == TRUE)
+test  <- subset(credit2, split == FALSE)
+
+View(train)
+
+dim(train)
+dim(test)
+```
+
+
+
+```{r}
+
+#Using some important variables to fit a Logistic Regression Model
+
+#IMPORTANT CATEGORICAL VARIABLES: 
+#("checkingstatus1", "history", "purpose_new", "savings", "property")
+
+#IMPORTANT NUMERICAL VARIABLES: 
+#("duration", "amount", "installment", "age")
+
+
+cat_var = c("checkingstatus1", "history", "purpose", "savings", "property")
+num_var = c("duration", "amount", "installment", "age")
+credit_new = train[,c(cat_var, num_var)]
+#View(credit_new)
+
+#Adding default variable to credit_new dataset
+credit_new$Default_ <- train$Default_
+View(credit_new)
+```
+
+### Creating dummy variables
+
+```{r}
+
+library(mlr)
+newdata<- createDummyFeatures(credit_new)
+View(newdata)
+colnames(newdata)
+
+```
+### Handling class imbalances using SMOTE
+
+```{r}
+
+#install.packages("DMwR")
+library("DMwR")
+table(newdata$Default_)
+
+new9<-data.frame(newdata)
+
+
+new9$Default_ = as.factor(new9$Default_)
+
+new9 <- SMOTE(Default_ ~ .,new9, perc.over=200,k=10,perc.under = 150 )
+#View(newData)
+#?SMOTE()
+
+table(new9$Default_)
+```
+
+### Creating test data
+
+```{r}
+
+
+cat_var = c("checkingstatus1", "history", "purpose", "savings", "property")
+num_var = c("duration", "amount", "installment", "age")
+credit_newtest = test[,c(cat_var, num_var)]
+View(credit_newtest)
+
+
+credit_newtest$Default_ <- test$Default_
+View(credit_newtest)
+
+Test_Creditnew<- createDummyFeatures(credit_newtest)
+View(Test_Creditnew)
+colnames(Test_Creditnew)
+
+```
+
+### Model Selection
+
+```{r}
+
+nothing <- glm(Default_ ~ 1,data=new9,family=binomial)
+nothing
+
+
+fullmodel <- glm(Default_ ~ ., data =new9,family=binomial) 
+fullmodel
+
+
+backwards <- step(fullmodel,trace=0)
+backwards
+
+forwards <- step(nothing,
+                 scope=list(lower=formula(nothing),upper=formula(fullmodel)), direction="forward")
+forwards
+
+
+formula(forwards)
+
+bothways <- step(nothing, list(lower=formula(nothing),upper=formula(fullmodel)),
+                 direction="both",trace=0)
+bothways
+formula(bothways)
+
+```
+The model with bothways gave us the lowest AIC value.SO we ll choose this model to predict on test data
+
+
+### cut-off
+
+```{r}
+pred <- predict(bothways,Test_Creditnew,type="response")
+pred[1:5]
+
+pred1 = ifelse(pred>0.5,1,0)
+
+```
+
+### Assessing Model Performance
+
+```{r}
+#install.packages("MLmetrics")
+#install.packages("caTools")
+library(MLmetrics)
+library(caTools)
+library(InformationValue)
+
+#install.packages("caret")
+library(caret)
+
+result<- table(Test_Creditnew$Default_,pred1)
+confusionMatrix(result)
+
+#mis classification error
+misClassError(Test_Creditnew$Default_,pred1)
+```
+#### Interpretation : As we can acuraccy on test is 72.8%,we can consider the model as a good model
+
+```{r}
+F1_Score(Test_Creditnew$Default_, pred1,  positive = "1")
+F1_Score(Test_Creditnew$Default_, pred1,  positive = "0")
+
+```
+Interpretation:
+Our model is good at identifying Y=0 than Y=1 
+
+### Plotting an ROC Curve
+
+```{r}
+
+#install.packages("ROCR")
+library(ROCR)
+ROCpred <- prediction(pred,Test_Creditnew$Default_)
+ROCpref <- ROCR::performance(ROCpred,"tpr","fpr")
+plot(ROCpref)
+plot(ROCpref,colorsize=T,print.cutoffs.at=seq(0,1,0.1),text.adj=c(-0.2,1.7))
+```
+
+
+```{r}
+library(pROC)
+roc_obj <- roc(Test_Creditnew$Default_,pred)
+auc = auc(roc_obj)
+auc 
+```
+Area under the curve: 0.787
+So,our model better has better predictive power 
+
+
+### ODDS RATIO
+```{r}
+Conc = Concordance(Test_Creditnew$Default_,pred)
+Conc
+C = Conc$Concordance
+D = Conc$Discordance
+T = Conc$Tied
+
+```
+Interpretation:In 78% cases model is able to differentiate goods and bads correctly as it has to be.So ours model is a good model.
+
+
+### Somers D
+```{r}
+
+D = (C-D)/(C+D)
+D
+```
+Interpretation: Somers d value is high, so we can say that out model has better predictive power
+
+
+### Gain table
+```{r}
+
+#Step 1 - Create a data frame with two columns
+
+
+actual = Test_Creditnew$Default_
+newdata = data.frame(actual,pred1)
+View(newdata)
+
+#Step2 - Sort the data frame by the predicted probability
+newdata = newdata[order(-newdata$pred1),]
+
+#Step 3: Divide data into 10 equal parts
+
+#how manyobservations should each group contain
+nrow(newdata)/10
+#Create the groups using index
+groups = rep(1:10,each=floor(nrow(newdata)/10))
+extra = rep(10,nrow(newdata)-length(groups))
+groups = c(groups,extra)
+groups
+
+#Attach the groups to the data
+newdata$groups = groups
+View(newdata)
+
+
+#Creating a Gain table
+
+library(sqldf)
+
+gainTable = sqldf("select groups,count(actual) as N,sum(actual) as N1 from newdata group by groups")
+class(gainTable)
+View(gainTable)
+
+#caluclate the cummulative sum of bads (or 1's)
+gainTable$cumN1=cumsum(gainTable$N1)
+
+#caluclate the cummulative percentage of bads (or 1's)
+gainTable$Gain = round(gainTable$cumN1/sum(gainTable$N1)*100,3)
+
+#Calulclate cummulative fit
+gainTable$Lift = round(gainTable$Gain/((1:10)*10),3)
+
+#print gain table
+gainTable
+
+```
+
+### Gain Chart
+```{r}
+plot(gainTable$groups, gainTable$Gain, type="b", 
+     main = "Gain Plot",
+     xlab = "Groups", ylab = "Gain")
+
+```
+
+
+
+Interpretation: 
+
+We can find 70% of defaulters in first 4 groups itself
+
+### Lift chart
+```{r}
+
+plot(gainTable$groups, gainTable$Lift, type="b", 
+     main = "Lift Plot",
+     xlab = "Groups", ylab = "Lift")
+
+```
+
+
+Interpretation:
+
+The number of defaulters found in the first 4 groups as suggested by the model, is 1.7 times more than the number of defaulters that we will find if the data was randomly chosen.
+
+
+### KS
+```{r}
+
+ks = sqldf("select groups, count(actual) as N, sum(actual) as N1, 
+           count(actual)-sum(actual) as N0 from newdata group by groups ")
+
+View(ks)
+
+
+#Calculate Percentage Events and Non-Events
+ks$PerN0 = round(ks$N0/sum(ks$N0)*100,2)
+ks$perN1 = round(ks$N1/sum(ks$N1)*100,2)
+
+
+#Calculate Cumulative Percentage of Events and Non-Events
+ks$CumPerN0 = cumsum(ks$PerN0)
+ks$CumPerN1 = cumsum(ks$perN1)
+
+
+#Calculation of KS
+ks$KS = abs(ks$CumPerN0 - ks$CumPerN1)
+
+
+#Print the Table
+ks
+
+```
+### KS plot
+```{r}
+plot(ks$groups, ks$CumPerN0, type="l", col = "Green")
+lines(ks$groups, ks$CumPerN1, col = "Red")
+
+```
+### KS Static 
+```{r}
+ks_stat(newdata$actual,newdata$pred1)
+```
+Interpretation:
+                      The plot shows us that how well our model can distinguish between defaulters and non-defaulters.
+0.4 is the maximum difference between the cumulative percentage of predicting defaulters and non-defaulters.
+Our model is predicting comparatively better than a random model
+
+
+### Gini index
+```{r}
+gini = (2*auc)-1
+gini
+```
+By gini index,we can say that ours is a good model
+
+### Conclusion:
+
+A logistic regression model is applied to the credit dataset using the following  features:installment,checkingstatus,duration,history,savings,age,property,purpose after determining the important variables, to make prediction of default status in the validation dataset.
+
+Accuracy is 72.8% and AUC score of the ROC curve is 0.78
