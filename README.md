@@ -8,9 +8,10 @@ and then use those characteristics to discriminate between good and bad credit r
 The main aim of this project is to predict if a customer will default on loan or not.
 Used
 1.Logistic regression 
-2.Decision tree algorithms to build the model.
+2.Decision tree algorithms
+3.Random Forest to build the model.
 
-Among the two algorithms Logistic Regression gave the best accuracy of 72.8%
+Among the algorithms Logistic Regression gave the best test accuracy of 72.8%
 
 Attached the WOE table generated for the categorical variables in the data
 
